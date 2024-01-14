@@ -1,0 +1,95 @@
+---
+title: "STA2201 HW1"
+author: "Chenxi Liu 1010615050"
+date: "2024-01-14"
+output: pdf_document
+---
+
+# Lab Exercise 1
+```{r}
+library(tidyverse)
+dm <- read_table("https://www.prdh.umontreal.ca/BDLC/data/ont/Mx_1x1.txt", skip = 2, col_types = "dcddd")
+head(dm)
+```
+
+## Question1 
+
+```{r}
+plot1 <- dm %>%
+  mutate(ratio = Female / Male) %>%
+  filter(Age %in% seq(10, 40, by = 10)) %>%
+  ggplot(aes(Year,ratio,color = Age)) +
+  geom_line() +
+  theme_bw()
+
+plot1
+```
+
+## Question2
+
+```{r}
+result1 <- dm %>%
+  group_by(Year) %>%
+  filter(!is.na(Female) & !is.na(Male)) %>%
+  arrange(Female) %>%
+  slice(1) %>%
+  ungroup()
+
+result1
+```
+
+## Question3
+
+```{r}
+library(dplyr)
+
+result2 <- dm %>%
+  group_by(Age) %>%
+  summarize(across(c(Female, Male, Total), ~sd(., na.rm = TRUE)))
+
+print(result2)
+```
+
+## Question4
+
+```{r}
+data <- read_table("https://www.prdh.umontreal.ca/BDLC/data/ont/Population.txt", skip = 2, col_types = "dcddd")
+head(data)
+
+plot2 <- dm %>%
+  select(-Total) %>%
+  left_join(data %>%
+              rename(pop_male = Male, pop_female = Female)) %>%
+  drop_na() %>%
+  group_by(Year) %>%
+  summarise(female_avg = sum(Female*pop_female)/sum(pop_female),
+            male_avg = sum(Male*pop_male)/sum(pop_male)) %>%
+  pivot_longer(-Year) %>%
+  ggplot(aes(Year, value, color = name)) +
+  geom_line() +
+  labs(y = 'Mortality Rate', x = 'Year', title = 'Weighted Average Mortality Rate of Canada')
+
+plot2
+```
+As the plot shown above, we can see that the weighted average mortality rate of both female and male drop down dramatically till 1975, while the rate of female began to rise up from 1975 to 2000. What's more, the weighted average mortality rate of male is always higher than that of female throughout timeline.
+
+## Question5
+
+```{r}
+# Convert "Age" to numeric
+dm$Age <- as.numeric(dm$Age)
+
+subset_data <- dm %>%
+  filter(Year == 2000, Age < 106) %>%
+  select(-c(Male,Total)) %>%
+  drop_na() 
+
+str(subset_data)
+
+# Run a simple linear regression
+model <- lm(log(Female) ~ Age, data = subset_data)
+
+# Display the summary of the regression
+summary(model)
+```
+According to the summary of model above, the estimate of coefficient of Age is 0.0869 with a significant p-value < $2e*10^6$, which is a positive number. It means that when the Age increases by 1 unit, the log of mortatility rate of female increases by 0.087 around, it indicates that mmortatility rate of female has a positive relationship with the grow of age.
