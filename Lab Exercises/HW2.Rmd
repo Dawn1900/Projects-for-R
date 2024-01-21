@@ -1,0 +1,257 @@
+---
+title: "HW2"
+author: "Chenxi Liu 1010615050"
+date: "2024-01-19"
+output: pdf_document
+---
+
+## Lab Exercise 2
+
+
+```{r}
+library(opendatatoronto)
+library(tidyverse)
+library(stringr)
+library(skimr) # EDA
+library(visdat) # EDA
+library(janitor)
+library(lubridate)
+library(ggrepel)
+```
+
+```{r}
+res <- list_package_resources("996cfe8d-fb35-40ce-b569-698d51fc683b") # obtained code from searching data frame above
+res <- res |> mutate(year = str_extract(name, "202.?"))
+delay_2022_ids <- res |> filter(year==2022) |> select(id) |> pull()
+
+delay_2022 <- get_resource(delay_2022_ids)
+# make the column names nicer to work with
+delay_2022 <- clean_names(delay_2022)
+
+delay_codes <- get_resource("3900e649-f31e-4b79-9f20-4731bbfd94f7")
+delay_data_codebook <- get_resource("ca43ac3d-3940-4315-889b-a9375e7b8aa4")
+
+head(delay_2022)
+```
+
+## Question1
+
+```{r}
+delay_2022 <- delay_2022 |> distinct()
+
+## Removing the observations that have non-standardized lines
+delay_2022 <- delay_2022 |> filter(line %in% c("BD", "YU", "SHP", "SRT"))
+
+delay_2022 %>% 
+  filter(min_delay>0) %>%
+  group_by(line,station) %>%
+  summarise(mean_delay = mean(min_delay)) %>%
+  arrange(-mean_delay) %>%
+  slice(1:5) %>%
+  ggplot(aes(x = station, y = mean_delay)) +
+           geom_col() +
+           facet_wrap(vars(line), 
+             scales = "free_y",
+             nrow = 4) +
+          coord_flip()
+  
+```
+
+
+## Question2
+
+```{r}
+delay_2022 <- delay_2022 |> 
+  left_join(delay_codes |> rename(code = `SUB RMENU CODE`, code_desc = `CODE DESCRIPTION...3`) |> select(code, code_desc)) 
+
+
+delay_2022 <- delay_2022 |>
+  mutate(code_srt = ifelse(line=="SRT", code, "NA")) |> 
+  left_join(delay_codes |> rename(code_srt = `SRT RMENU CODE`, code_desc_srt = `CODE DESCRIPTION...7`) |> select(code_srt, code_desc_srt))  |> 
+  mutate(code = ifelse(code_srt=="NA", code, code_srt),
+         code_desc = ifelse(is.na(code_desc_srt), code_desc, code_desc_srt)) |> 
+  select(-code_srt, -code_desc_srt)
+
+# Calculate the most frequent delay reasons
+top_delay_reasons <- delay_2022 %>%
+  filter((min_delay > 0) & !is.na(code_desc)) %>%
+  count(code_desc, sort = TRUE) %>%
+  filter(row_number() <= n() / 2) %>%
+  pull(code_desc)
+ 
+# Filter delay_2022 based on conditions
+filtered_delay_2022 <- delay_2022 %>%
+  filter(min_delay > 0, code_desc %in% top_delay_reasons)
+
+library(MASS)
+
+#Apply the negative binomial regression model
+model_nb <- glm.nb(min_delay ~ line + code_desc, data = filtered_delay_2022)
+
+# Summarize the model
+summary(model_nb)
+
+```
+
+### Answer2
+
+The results of the Negative Binomial Regression model show that both line and reasons have significant effects on the count of delay minutes.For example, such as "ATC Operator Related" and "ATC Project," are associated with a substantial increase in delay minutes, while delays related to "Assault / Patron Involved" are associated with a decrease in delay minutes. There are also some covariates that do not have significant effects on the delay time, such as "Radio System Fault" and "Track Switch Failure - Signal Related Problem ", which also in line with the reality .
+
+
+## Question3
+
+```{r}
+res1 <- list_package_resources("e869d365-2c15-4893-ad2a-744ca867be3b") # obtained code from searching data frame above
+res1 <- res1 |> mutate(year = str_extract(name, "201.?"))
+campaign2014_ids <- res1 |> filter(year==2014 & grepl("Data", name)) |> pull(id)
+campaign_2014 <- get_resource(campaign2014_ids)
+
+mayor_data <- campaign_2014[grep("Mayor", names(campaign_2014))][[1]]#select the maylor selection related data
+colnames(mayor_data) <- unlist(mayor_data[1, ]) #first row as the column names
+mayor_data <- mayor_data[-1, ]
+
+mayor_data <- mayor_data %>%
+  clean_names()  
+head(mayor_data)
+```
+
+## Question4
+
+```{r}
+skim(mayor_data)
+
+#Check the missing value
+mayor_data %>%
+  summarize(across(everything(), ~ sum(is.na(.x))))
+
+#Check the duplicates
+get_dupes(mayor_data)
+mayor_data <- mayor_data |> distinct()
+
+#Check the data type of every column
+sapply(mayor_data, class)
+
+#Transfer the character column format to numeric
+mayor_data$contribution_amount <- as.numeric(mayor_data$contribution_amount)
+```
+
+### Answer4
+
+There are some empty columns :contributors_address, goods_or_service_desc, relationship_to_candidate, president_business_manager, authorized_representative and ward, so we can exclude these empty columns in our following analysis. On top of these empty columns, there is no missing values for other columns.
+
+## Question5
+
+```{r}
+#check the distribution of contribution amount
+ggplot(data = mayor_data) + 
+  geom_histogram(aes(x = contribution_amount)) + scale_x_log10()
+
+#check if there is outlier of thr contribution amount
+ggplot(mayor_data, aes(y = contribution_amount)) +
+  geom_boxplot()
+#check the outlier
+mayor_data %>% 
+  arrange(-contribution_amount) %>%
+  slice(1:10)
+
+#exclude outlier
+mayor_data<- mayor_data %>% filter(contribution_amount <= 10000)
+  
+#check the distribution of contribution type
+ggplot(data = mayor_data) + 
+  geom_histogram(aes(x = contribution_amount, fill= contribution_type_desc)) + scale_x_log10()
+
+#check the distribution of contributor type
+ggplot(data = mayor_data) + 
+  geom_histogram(aes(x = contribution_amount, fill= contributor_type_desc)) + scale_x_log10()
+
+#Show the distribution of contribution amount for different candidates
+mayor_data |> 
+  group_by(candidate) |> 
+  summarise(total_amount = sum(contribution_amount)) |> 
+  ggplot(aes(x=reorder(candidate, total_amount), y=total_amount)) + 
+  geom_col() + 
+  coord_flip()
+```
+
+### Answer5
+
+By checking the outliers of the contribution amount, we could see that there are 6 rows of amount which are beyond 10000 dollar, and these contributors are also the candidates themselves, they are : Ford Rob, Ford Doug and Goldkind Ari. And 4 out of 6 outlier contributions are from Ford Rob.
+
+## Question6
+
+```{r}
+
+candidate_data <- mayor_data |> 
+  group_by(candidate) |> 
+  summarise(total_amount = sum(contribution_amount), mean_amount = mean(contribution_amount), number_contribution = n() ) 
+
+candidate_data %>% 
+  arrange(-total_amount) %>%
+  slice(1:5) %>%
+  ggplot(aes(x= candidate, y=total_amount)) + 
+  geom_col() 
+
+candidate_data %>% 
+  arrange(-mean_amount) %>%
+  slice(1:5) %>%
+  ggplot(aes(x= candidate, y=mean_amount)) + 
+  geom_col() 
+
+candidate_data %>% 
+  arrange(-number_contribution) %>%
+  slice(1:5) %>%
+  ggplot(aes(x= candidate, y=number_contribution)) + 
+  geom_col() 
+
+```
+
+## Question7
+
+```{r}
+
+candidate_data_without_self <- mayor_data %>%
+  filter(!grepl(candidate, contributors_name)) %>%
+  group_by(candidate) %>%
+  summarise(
+    total_amount = sum(contribution_amount),
+    mean_amount = mean(contribution_amount),
+    number_contribution = n()
+  )
+
+candidate_data_without_self %>% 
+  arrange(-total_amount) %>%
+  slice(1:5) %>%
+  ggplot(aes(x= candidate, y=total_amount)) + 
+  geom_col() 
+
+candidate_data_without_self %>% 
+  arrange(-mean_amount) %>%
+  slice(1:5) %>%
+  ggplot(aes(x= candidate, y=mean_amount)) + 
+  geom_col() 
+
+candidate_data_without_self %>% 
+  arrange(-number_contribution) %>%
+  slice(1:5) %>%
+  ggplot(aes(x= candidate, y=number_contribution)) + 
+  geom_col() 
+
+```
+
+## Question8
+
+```{r}
+# Count the number of contributors who gave money to more than one candidate
+contributors_multiple_candidates <- mayor_data %>%
+  group_by(contributors_name) %>%
+  summarise(num_candidates = n_distinct(candidate)) %>%
+  filter(num_candidates > 1) %>%
+  count()
+
+contributors_multiple_candidates
+```
+
+### Answer8
+
+There are 184 contributors who gave money to more than one candidate.
