@@ -1,0 +1,84 @@
+---
+title: "Lab exercise3"
+author: "Chenxi Liu 1010615050"
+date: "2024-01-26"
+output: pdf_document
+---
+
+## Question 1
+
+```{r}
+n<- 129
+y<- 118
+p<- round(y/n, 3)
+# Standard error
+se <- sqrt(p * (1 - p) / n)
+# Confidence Interval
+CL_upper <- p+qnorm(0.975)*se
+CL_lower <- p-qnorm(0.975)*se
+
+p
+CL_lower
+CL_upper
+```
+
+
+## Question 2
+
+```{r}
+alpha <- 1
+beta <- 1
+mean_theta <- round((alpha+y)/(alpha + beta + n),3)
+
+# Confidence Interval
+# Calculate the 95% credible interval
+credible_interval <- qbeta(c(0.025, 0.975), alpha+y, beta + n - y)
+
+mean_theta
+credible_interval
+```
+
+## Question 3
+
+Answer3: 
+
+Comparing it to the Beta(1,1) prior used in Question 2, the Beta(10,10) prior indicates that we are assuming more prior information about the distribution of theta. With alpha = 10 and beta = 10, we are expressing a more concentrated and specific belief about the proportion of happy women compared to the uniform distribution of the Beta(1,1) prior, we are more confident to assume the proportion of happy woman to be 0.5.
+
+
+## Question 4
+
+```{r}
+library(tidyverse)
+
+plot <- ggplot(data = tibble(x = seq(0, 1, by = 0.01)), aes(x)) +
+  stat_function(fun = dbeta, args = list(shape1 = 1, shape2 = 1), aes(color = "Beta(1,1) prior")) + 
+  stat_function(fun = dbeta, args = list(shape1 = y+1, shape2 = n-y+1), aes(color = "Beta(1,1) posterior")) + 
+  stat_function(fun = dbeta, args = list(shape1 = 10, shape2 = 10), aes(color = "Beta(10,10) prior")) + 
+  stat_function(fun = dbeta, args = list(shape1 = y+10, shape2 = n-y+10), aes(color = "Beta(10,10) posterior")) + 
+  geom_histogram(data = tibble(x = rbinom(n, n = n, p)/(n)), aes(x = x, y = ..density.., fill = 'likelihood'))
+plot
+
+
+```
+
+## Question 5
+
+```{r}
+boy <- 251527
+girl <- 241945
+n<- boy+girl
+p_boy <- round(boy/(boy+girl),3)
+alpha <- boy+1
+beta <- girl+1
+probability <- pbeta(0.5, alpha, beta)
+probability
+```
+
+
+## Question 6
+
+Answer6:
+
+A noninformative prior : it would be the uniform distribution U(-1,1)
+
+A subjective/informative prior : the common sense would be that after practice, students will make progress, so the final proportion would be higher than the initial proportion. Based on my experience, I would assume the prior distribution be the right skewed distribution with mode around 0.2-0.4 (20%-40% improvement)
