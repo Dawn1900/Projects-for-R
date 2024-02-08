@@ -1,0 +1,86 @@
+---
+title: "Lab exercise 4"
+author: "Chenxi Liu 1010615050"
+date: "2024-02-08"
+output: pdf_document
+---
+
+## Question 4
+
+Add in mother's IQ as a covariate and rerun the model. Please  mean center the covariate before putting it into the model. Interpret the coefficient on the (centered) mum's IQ. 
+
+```{r}
+library(tidyverse)
+library(rstan)
+library(tidybayes)
+library(here)
+```
+
+```{r}
+kidiq <- readRDS("/Users/dawn/Desktop/uoft/sta2201/HW/kidiq.RDS")
+kidiq
+```
+
+```{r}
+y <- kidiq$kid_score
+mu0 <- 80
+sigma0 <- 10
+
+X <- cbind(kidiq$mom_hs, kidiq$mom_iq - mean(kidiq$mom_iq))
+K <- 2
+
+data <- list(y = y, N = length(y), 
+             X =X, K = K)
+fit <- stan(file = "/Users/dawn/Desktop/uoft/sta2201/HW/kids3.stan",
+            data = data, 
+            iter = 1000)
+
+fit
+```
+
+beta[2]: The coefficient for the centered mom_iq variable. The mean value is 0.57, with a standard error of 0.00, and a standard deviation of 0.06. The 95% credible interval for the coefficient is between 0.45 and 0.69. The mean of coefficient of mom's iq is positive which shows a positive association with kids iq, this means that for a one-unit increase in the mum's IQ from its mean value, the kid's score is expected to increase by 0.57 units, holding all other variables constant. 
+
+
+## Question 5 
+
+Confirm the results from Stan agree with `lm()`
+
+```{r}
+lm_model <- lm(y ~ X[,1] + X[,2])
+summary(lm_model)
+```
+The coefficients obtained from the Bayesian model using Stan are indeed consistent with the coefficients obtained from the frequentist linear regression model using lm().
+
+## Question 6
+
+Plot the posterior estimates of scores by education of mother for mothers who have an IQ of 110. 
+
+```{r}
+center_IQ <- 110-mean(kidiq$mom_iq) #which is 10
+
+fit %>% 
+  gather_draws(alpha, beta[condition]) %>% 
+  group_by(.draw) %>%
+  mutate(.value = ifelse(!is.na(condition)&condition==2, .value*center_IQ,  .value)) %>% 
+  summarise(nhs = sum(.value[is.na(condition)|condition==2]),
+            hs = sum(.value)) %>% 
+  pivot_longer(nhs:hs, names_to = "education", values_to = "estimated_score") %>% 
+  ggplot(aes(y = education, x = estimated_score)) +
+  stat_halfeyeh() + 
+  ggtitle("Posterior estimates of scores by education of mother")
+```
+
+## Question 7
+
+Generate and plot (as a histogram) samples from the posterior predictive distribution for a new kid with a mother who graduated high school and has an IQ of 95. 
+
+```{r}
+center_IQ <- 95-mean(kidiq$mom_iq) 
+
+samples <- extract(fit)
+mu <- samples[["alpha"]] + samples[["beta"]][,1] + samples[["beta"]][,2]*center_IQ
+sigmas <- samples[["sigma"]]
+
+predicts <- tibble(predicts = rnorm(length(sigmas), mean = mu, sd = sigmas))
+ggplot(predicts,aes(predicts)) + geom_histogram() + ggtitle("Distribution of predicted scores for new kid with mom's IQ = 95")
+```
