@@ -1,0 +1,252 @@
+---
+title: "Lab exercise 4"
+author: "Chenxi Liu 1010615050"
+date: "2024-02-08"
+output: pdf_document
+---
+
+## Question 1
+Use plots or tables to show three interesting observations about the data. Remember:
+
+- Explain what your graph/ tables show
+- Choose a graph type that's appropriate to the data type
+
+```{r}
+library(tidyverse)
+library(rstan)
+library(tidybayes)
+library(here)
+```
+
+```{r}
+kidiq <- readRDS("/Users/dawn/Desktop/uoft/sta2201/HW/kidiq.RDS")
+kidiq
+```
+
+```{r}
+library(ggplot2)
+kidiq %>% 
+  ggplot(aes(x = factor(mom_hs), y = kid_score, fill = factor(mom_hs))) + 
+  geom_violin(trim = FALSE) + 
+  scale_fill_brewer(palette = "Set1", name = "Mother's Education") + 
+  labs(x = "Mother's High School Completion", y = "Kid's Test Score", fill = "Mother's Education") +
+  theme_minimal()
+
+```
+
+Violin plots combine box plots with kernel density estimation, showing the distribution shape of test scores for each group.
+*The red violin (mother's education = 0) appears to be narrower and more pointed at both ends, which might suggest a slightly more uniform distribution with less variability than the blue violin (mother's education = 1).
+*The blue violin (mother's education = 1) seems to have a broader distribution, indicating that the kids' test scores vary more within this group. It also appears to be slightly shifted upwards, suggesting that children whose mothers completed high school tend to have higher test scores on average.
+
+```{r}
+kidiq %>% 
+  ggplot(aes(x = mom_iq, y = kid_score)) + 
+  geom_point(alpha = 0.5) +  # For scatter plot
+  geom_smooth() +  # For density estimation
+  labs(x = "Mother's IQ", y = "Kid's Test Score") +
+  theme_minimal()
+
+```
+
+There appears to be a positive relationship between mother's iq and kid's score.There is considerable variability in the kid's test scores for any given level of mother's IQ. The shaded area around the fitted line represents a confidence interval for the mean response. The fact that this interval widens as mother's IQ increases suggests that the prediction of the kid's test score is less certain at higher levels of mother's IQ.
+
+```{r}
+kidiq %>%
+  ggplot(aes(x = mom_iq, fill = as.factor(mom_hs))) + 
+  geom_density(alpha = 0.5) + 
+  scale_fill_brewer(palette = "Set1", name = "Mother's Education") + 
+  labs(x = "Mom's IQ", y = "Density") +
+  theme_minimal()
+
+```
+
+It shows that in general, mom who have higher education level tend to show higher probability of high IQ, which is in line with the reality.
+
+# Estimating mean, no covariates
+```{r}
+y <- kidiq$kid_score
+mu0 <- 80
+sigma0 <- 10
+
+# named list to input for stan function
+data <- list(y = y, 
+             N = length(y), 
+             mu0 = mu0,
+             sigma0 = sigma0)
+
+fit <- stan(file = "/Users/dawn/Desktop/uoft/sta2201/HW/kids2.stan",
+            data = data,
+            chains = 3,
+            iter = 500)
+
+fit
+```
+
+```{r}
+traceplot(fit)
+```
+
+```{r}
+pairs(fit, pars = c("mu", "sigma"))
+```
+
+```{r}
+stan_dens(fit, separate_chains = TRUE)
+```
+
+```{r}
+post_samples <- rstan::extract(fit)
+head(post_samples[["mu"]])
+```
+```{r}
+dsamples <- fit  |> 
+  gather_draws(mu, sigma) # gather = long format
+dsamples
+
+# wide format
+fit  |>  spread_draws(mu, sigma)
+
+# quickly calculate the quantiles using 
+
+dsamples |> 
+  median_qi(.width = 0.8)
+```
+```{r}
+dsamples |> 
+  filter(.variable == "mu") |> 
+  ggplot(aes(.value, color = "posterior")) + geom_density(size = 1) + 
+  xlim(c(70, 100)) + 
+  stat_function(fun = dnorm, 
+        args = list(mean = mu0, 
+                    sd = sigma0), 
+        aes(colour = 'prior'), size = 1) +
+  scale_color_manual(name = "", values = c("prior" = "red", "posterior" = "black")) + 
+  ggtitle("Prior and posterior for mean test scores") + 
+  xlab("score")
+  
+```
+## Question 2
+
+Change the prior to be much more informative (by changing the standard deviation to be 0.1). Rerun the model. Do the estimates change? Plot the prior and posterior densities. 
+```{r}
+sigma0 <- 0.1
+
+data <- list(y = y, 
+             N = length(y), 
+             mu0 = mu0,
+             sigma0 = sigma0)
+
+fit <- stan(file ="/Users/dawn/Desktop/uoft/sta2201/HW/kids2.stan",
+            data = data)
+
+summary(fit)[["summary"]]
+
+dsamples <- fit %>%
+  gather_draws(mu, sigma) 
+
+dsamples %>% 
+  filter(.variable == "mu") %>% 
+  ggplot(aes(.value, color = "posterior")) + geom_density(size = 1) + 
+  xlim(c(70, 100)) + 
+  stat_function(fun = dnorm, 
+        args = list(mean = mu0, 
+                    sd = sigma0), 
+        aes(colour = 'prior'), size = 1) +
+  scale_color_manual(name = "", values = c("prior" = "red", "posterior" = "black")) + 
+  ggtitle("Prior and posterior for mean test scores") + 
+  xlab("score")
+```
+
+```{r}
+X <- as.matrix(kidiq$mom_hs, ncol = 1) # force this to be a matrix
+K <- 1
+
+data <- list(y = y, N = length(y), 
+             X =X, K = K)
+fit2 <- stan(file = "/Users/dawn/Desktop/uoft/sta2201/HW/kids3.stan",
+            data = data, 
+            iter = 1000)
+```
+## Question 3
+
+a) Confirm that the estimates of the intercept and slope are comparable to results from `lm()` 
+b) Do a `pairs` plot to investigate the joint sample distributions of the slope and intercept. Comment briefly on what you see. Is this potentially a problem?
+
+```{r}
+summary(fit2)$summary[1:2,]
+summary(lm(y~kidiq$mom_hs))
+```
+
+
+```{r}
+pairs(fit2, pars = c("alpha", "beta[1]"))
+```
+There is strong linear relationship, which indicates a high correlation between parameters.If the slope and intercept are highly correlated, it can make the model sensitive to the scale of the predictor variable.
+
+## Question 4
+
+Add in mother's IQ as a covariate and rerun the model. Please  mean center the covariate before putting it into the model. Interpret the coefficient on the (centered) mum's IQ. 
+
+```{r}
+y <- kidiq$kid_score
+mu0 <- 80
+sigma0 <- 10
+
+X <- cbind(kidiq$mom_hs, kidiq$mom_iq - mean(kidiq$mom_iq))
+K <- 2
+
+data <- list(y = y, N = length(y), 
+             X =X, K = K)
+fit <- stan(file = "/Users/dawn/Desktop/uoft/sta2201/HW/kids3.stan",
+            data = data, 
+            iter = 1000)
+
+fit
+```
+
+beta[2]: The coefficient for the centered mom_iq variable. The mean value is 0.57, with a standard error of 0.00, and a standard deviation of 0.06. The 95% credible interval for the coefficient is between 0.45 and 0.69. The mean of coefficient of mom's iq is positive which shows a positive association with kids iq, this means that for a one-unit increase in the mum's IQ from its mean value, the kid's score is expected to increase by 0.57 units, holding all other variables constant. 
+
+
+## Question 5 
+
+Confirm the results from Stan agree with `lm()`
+
+```{r}
+lm_model <- lm(y ~ X[,1] + X[,2])
+summary(lm_model)
+```
+The coefficients obtained from the Bayesian model using Stan are indeed consistent with the coefficients obtained from the frequentist linear regression model using lm().
+
+## Question 6
+
+Plot the posterior estimates of scores by education of mother for mothers who have an IQ of 110. 
+
+```{r}
+center_IQ <- 110-mean(kidiq$mom_iq) #which is 10
+
+fit %>% 
+  gather_draws(alpha, beta[condition]) %>% 
+  group_by(.draw) %>%
+  mutate(.value = ifelse(!is.na(condition)&condition==2, .value*center_IQ,  .value)) %>% 
+  summarise(nhs = sum(.value[is.na(condition)|condition==2]),
+            hs = sum(.value)) %>% 
+  pivot_longer(nhs:hs, names_to = "education", values_to = "estimated_score") %>% 
+  ggplot(aes(y = education, x = estimated_score)) +
+  stat_halfeyeh() + 
+  ggtitle("Posterior estimates of scores by education of mother")
+```
+
+## Question 7
+
+Generate and plot (as a histogram) samples from the posterior predictive distribution for a new kid with a mother who graduated high school and has an IQ of 95. 
+
+```{r}
+center_IQ <- 95-mean(kidiq$mom_iq) 
+
+samples <- rstan::extract(fit)
+mu <- samples[["alpha"]] + samples[["beta"]][,1] + samples[["beta"]][,2]*center_IQ
+sigmas <- samples[["sigma"]]
+
+predicts <- tibble(predicts = rnorm(length(sigmas), mean = mu, sd = sigmas))
+ggplot(predicts,aes(predicts)) + geom_histogram() + ggtitle("Distribution of predicted scores for new kid with mom's IQ = 95")
+```
