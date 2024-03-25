@@ -1,0 +1,396 @@
+---
+title: "Lab10"
+author: "Chenxi Liu 1010615050"
+date: "2024-03-20"
+output: pdf_document
+---
+
+# Child mortality in Sri Lanka
+
+In this lab you will be fitting a couple of different models to the data about child mortality in Sri Lanka, which was used in the lecture. Here's the data and the plot from the lecture:
+
+```{r}
+library(tidyverse)
+library(here)
+library(rstan)
+library(tidybayes)
+
+library(readr)
+lka <- read_csv("/Users/dawn/Desktop/uoft/sta2201/HW/lka.csv")
+
+ggplot(lka, aes(year, logit_ratio)) +
+  geom_point(aes( color = source)) + 
+  geom_line(aes( color = source), lty = 2) + 
+  geom_ribbon(aes(ymin = logit_ratio - se,
+                  ymax = logit_ratio + se,
+                  fill =  source), alpha = 0.1) +
+  theme_bw()+
+  labs(title = "Ratio of neonatal to other child mortality (logged), Sri Lanka", y = "log ratio")
+```
+
+# Fitting a linear model 
+
+Let's firstly fit a linear model in time to these data. Here's the code to do this:
+
+```{r}
+observed_years <- lka$year
+years <- min(observed_years):max(observed_years)
+nyears <- length(years)
+
+stan_data <- list(y = lka$logit_ratio, year_i = observed_years - years[1]+1, 
+                  T = nyears, years = years, N = length(observed_years), 
+                  mid_year = mean(years), se = lka$se)
+
+mod <- stan(data = stan_data,
+             file = "/Users/dawn/Desktop/uoft/sta2201/HW/lka_linear_me.stan")
+
+```
+
+Extract the results:
+
+```{r}
+res <- mod %>% 
+  gather_draws(mu[t]) %>% 
+  median_qi() %>% 
+  mutate(year = years[t])
+```
+
+
+Plot the results:
+
+```{r}
+ggplot(lka, aes(year, logit_ratio)) +
+  geom_point(aes( color = source)) + 
+  geom_line(aes( color = source), lty = 2) + 
+  geom_ribbon(aes(ymin = logit_ratio - se, 
+                  ymax = logit_ratio + se, 
+                  fill =  source), alpha = 0.1) + 
+  theme_bw()+
+  geom_line(data = res, aes(year, .value)) + 
+  geom_ribbon(data = res, aes(y = .value, ymin = .lower, ymax = .upper), alpha = 0.2)+
+  theme_bw()+
+  labs(title = "Ratio of neonatal to under-five child mortality (logit), Sri Lanka",
+       y = "logit ratio", subtitle = "Linear fit shown in black")
+```
+
+## Question 1
+
+Project the linear model above out to 2022 by adding a `generated quantities` block in Stan (do the projections based on the expected value $\mu$). Plot the resulting projections on a graph similar to that above. 
+
+```{r}
+model_code <- "
+data {
+  int<lower=0> N; // number of observations
+  int<lower=0> T; //number of years
+  int<lower=0> mid_year; // mid-year of study
+  vector[N] y; //log ratio
+  vector[N] se; // standard error around observations
+  vector[T] years; // unique years of study
+  int<lower=0> year_i[N]; // year index of observations
+  
+}
+
+parameters {
+  real alpha;
+  real beta;
+
+}
+
+transformed parameters{
+  vector[T] mu;
+  
+  for(t in 1:T){
+    mu[t] = alpha + beta*(years[t] - mid_year);
+  }
+}
+
+model {
+  
+  y ~ normal(mu[year_i], se);
+  
+  alpha ~ normal(0, 1);
+  beta ~ normal(0,1);
+}
+
+generated quantities {
+  real mu_2022;
+  mu_2022 = alpha + beta * (2022 - mid_year);
+}
+"
+```
+
+```{r}
+
+stan_data <- list(y = lka$logit_ratio, year_i = observed_years - years[1]+1, 
+                  T = nyears, years = years, N = length(observed_years), 
+                  mid_year = mean(years), se = lka$se)
+
+# Fit the model
+fit <- stan(
+  model_code  = model_code,  # your Stan model file
+  data = stan_data,
+  iter = 1000,
+  chains = 4
+)
+
+res <- fit %>% 
+  gather_draws(mu[t]) %>% 
+  median_qi() %>% 
+  mutate(year = years[t])
+
+mu_2022 <- extract(fit)$mu_2022
+lka_projection <- data.frame(year = 2022, logit_ratio = median(mu_2022)) 
+
+# Plot the existing data
+p <- ggplot(lka, aes(year, logit_ratio)) +
+  geom_point(aes(color = source)) +
+  geom_line(aes(color = source), lty = 2) +
+  geom_ribbon(aes(ymin = logit_ratio - se, ymax = logit_ratio + se, fill = source), alpha = 0.1) +
+  theme_bw() +
+  labs(title = "Ratio of neonatal to under-five child mortality (logit), Sri Lanka",
+       y = "logit ratio", subtitle = "Linear fit and projection shown in black")
+
+# Add the projection for 2022
+p <- p + geom_point(data = lka_projection, aes(year, logit_ratio), color = "black") +
+  geom_line(data = lka_projection, aes(year, logit_ratio), color = "black", linetype = "dotted")
+
+# Print the plot
+print(p)
+
+```
+
+
+## Question 2
+
+The projections above are for the logit of the ratio of neonatal to under-five child mortality. You can download estimates of the under-five child mortality from 1951 to 2022 here: https://childmortality.org/all-cause-mortality/data/estimates?refArea=LKA. Use these data to get estimates and projections of neonatal mortality for Sri Lanka, and plot the results. 
+
+```{r}
+df <- read_csv("/Users/dawn/Desktop/uoft/sta2201/HW/lab10.csv")
+head(df)
+```
+```{r}
+df$Year <- as.character(df$Year)
+df$Year <- ifelse(grepl("^[0-9]+$", df$Year), as.numeric(df$Year), NA)
+
+# Create the plot
+ggplot(data = df, aes(x = Year)) +
+  geom_line(aes(y = Estimate), color = "pink", size = 1) +
+  geom_ribbon(aes(ymin = `Lower bound`, ymax = `Upper bound`), fill = "gray", alpha = 0.2)
+  theme_minimal() +
+  labs(title = "Neonatal Mortality Estimates and Projections for Sri Lanka",
+x = "Year",
+       y = "Neonatal Mortality Rate (per 1000 live births)") +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+# Random walks
+
+
+## Question 3
+
+Code up and estimate a first order random walk model to fit to the Sri Lankan data, taking into account measurement error, and project out to 2022. 
+
+```{r}
+model3 <- "
+  data {
+  int<lower=0> N;         // Number of observations
+  vector[N] logit_ratio;  // Observed data (logit ratios)
+  vector<lower=0>[N] se;  // Standard errors of observations
+  int<lower=0> T;         // Number of years to project beyond the last observed year
+  int<lower=0> last_year; // The last observed year
+}
+
+parameters {
+  vector[N] true_logit;  // True underlying logit ratios
+  real<lower=0> sigma;   // Standard deviation of the random walk
+}
+
+model {
+  true_logit[1] ~ normal(0, 10); // Weakly informative prior for the first logit ratio
+  
+  for (n in 2:N) {
+    true_logit[n] ~ normal(true_logit[n-1], sigma); // Random walk
+  }
+  
+  logit_ratio ~ normal(true_logit, se); // Likelihood with measurement error
+}
+
+generated quantities {
+  vector[N+T] projected_logit;
+  projected_logit[1:N] = true_logit;
+
+  for (t in 1:T) {
+    projected_logit[N+t] = normal_rng(projected_logit[N+t-1], sigma);
+  }
+}
+
+"
+```
+
+```{r}
+# Prepare data for Stan
+stan_data <- list(
+  N = nrow(lka),
+  logit_ratio = lka$logit_ratio,
+  se = lka$se,
+  T = 2022 - max(lka$year),
+  last_year = max(lka$year)
+)
+
+# Fit the model
+fit <- stan(model_code = model3, data = stan_data, iter = 1000, chains = 4)
+
+# Extract the projected logits
+posterior <- rstan::extract(fit)
+projected_logit <- apply(posterior$projected_logit, 2, mean)
+
+# Calculate projected ratios using the logistic function
+projected_ratio1<- exp(projected_logit) / (1 + exp(projected_logit))
+
+# Combine the observed and projected data
+years <- c(lka$year, (max(lka$year) + 1):2022)
+ratios1 <- c(lka$ratio, projected_ratio1[(nrow(lka) + 1):length(projected_ratio1)])
+projection_data <- data.frame(year = years, ratio = ratios1)
+
+# Plot the results
+ggplot(projection_data, aes(x = year, y = ratio)) +
+  geom_line(color = "blue", size = 1) + # Line for both observed and projected
+  geom_point(data = lka, aes(x = year, y = ratio), color = 'red') + # Points for observed data
+  geom_point(data = projection_data[(max(lka$year) + 1):nrow(projection_data), ], 
+             aes(x = year, y = ratio), color = 'blue') + # Points for projected data
+  theme_minimal() +
+  labs(title = 'Observed and Projected Neonatal to Under-Five Mortality Ratio in Sri Lanka',
+       x = 'Year', y = 'Mortality Ratio') +
+  scale_x_continuous(breaks = seq(min(projection_data$year), max(projection_data$year), by = 5)) # Adjust axis
+
+print(p)
+```
+## Question 4
+
+Now alter your model above to estimate and project a second-order random walk model (RW2). 
+
+```{r}
+
+model4 <- "
+data {
+  int<lower=1> N;           // Number of observations
+  vector[N] logit_ratio;    // Observed data (logit ratios)
+  vector<lower=0>[N] se;    // Standard errors of observations
+  int<lower=0> T;           // Number of years to project beyond the last observed year
+  int<lower=0> last_year;   // The last observed year
+}
+
+parameters {
+  vector[N] true_logit;       // True underlying logit ratios
+  real<lower=0> sigma_walk;   // Standard deviation of the second-order walk
+  real<lower=0> sigma_obs;    // Standard deviation of observations (measurement error)
+}
+
+model {
+  // Priors
+  true_logit[1] ~ normal(0, 10);  // Weakly informative prior for the first logit ratio
+  true_logit[2] ~ normal(true_logit[1], sigma_walk); // Prior for the second value
+
+  // Second-order random walk
+  for (n in 3:N) {
+    true_logit[n] ~ normal(2 * true_logit[n-1] - true_logit[n-2], sigma_walk);
+  }
+  
+  // Likelihood
+  logit_ratio ~ normal(true_logit, sigma_obs);
+}
+
+generated quantities {
+  vector[N+T] projected_logit;
+  projected_logit[1:N] = true_logit;
+
+  // Projecting out to T years beyond the last observed year
+  for (t in 1:T) {
+    projected_logit[N+t] = normal_rng(2 * projected_logit[N+t-1] - projected_logit[N+t-2], sigma_walk);
+  }
+}
+
+"
+```
+
+```{r}
+
+fit_rw2 <- stan(
+  model_code = model4,
+  data = stan_data, 
+  iter = 1000, 
+  chains = 4
+)
+
+# Extract the projected logits from the fit
+posterior_rw2 <- rstan::extract(fit_rw2)
+projected_logit_rw2 <- apply(posterior_rw2$projected_logit, 2, mean)
+
+# Calculate projected ratios using the logistic function
+projected_ratio2 <- exp(projected_logit_rw2) / (1 + exp(projected_logit_rw2))
+
+# Combine the observed and projected data
+years <- c(lka$year, (max(lka$year) + 1):2022)
+ratios2 <- c(lka$ratio, projected_ratio2[(nrow(lka) + 1):length(projected_ratio2)])
+projection_data2 <- data.frame(year = years, ratio = ratios2)
+
+# Plot the results
+ggplot(projection_data2, aes(x = year, y = ratio)) +
+  geom_line(color = "blue", size = 1) + # Line for both observed and projected
+  geom_point(data = lka, aes(x = year, y = ratio), color = 'red') + # Points for observed data
+  geom_point(data = projection_data2[(max(lka$year) + 1):nrow(projection_data2), ], 
+             aes(x = year, y = ratio), color = 'blue') + # Points for projected data
+  theme_minimal() +
+  labs(title = 'Observed and Projected Neonatal to Under-Five Mortality Ratio in Sri Lanka',
+       x = 'Year', y = 'Mortality Ratio') +
+  scale_x_continuous(breaks = seq(min(projection_data$year), max(projection_data$year), by = 5)) # Adjust axis
+
+print(p)
+```
+
+## Question 5
+
+Run the first order and second order random walk models, including projections out to 2022. Compare these estimates with the linear fit by plotting everything on the same graph. 
+
+```{r}
+observed_ratios <- lka$logit_ratio
+lka_projection <- lka_projection$logit_ratio
+rw1_projections <- projection_data$ratio
+rw2_projections <- projection_data2$ratio
+
+# Observed data
+observed_data <- data.frame(year = lka$year,
+                            ratio = lka$logit_ratio,
+                            type = "Observed")
+
+# Projection data
+projection_years <- (max(lka$year) + 1):2022
+projection_length <- length(projection_years)
+
+# Assuming lka_projection, rw1_projections, rw2_projections are correctly sized for the projection period
+linear_data <- data.frame(year = years, ratio = lka_projection, type = "Linear")
+rw1_data <- data.frame(year = years, ratio = rw1_projections, type = "RW1")
+rw2_data <- data.frame(year = years, ratio = rw2_projections, type = "RW2")
+
+# Combine all data
+combined_data <- rbind(observed_data, linear_data, rw1_data, rw2_data)
+
+# Plot
+ggplot(combined_data, aes(x = year, y = ratio, color = type)) +
+  geom_line() +
+  geom_point(data = subset(combined_data, type == "Observed")) +
+  scale_color_manual(values = c("Observed" = "red", "Linear" = "blue", "RW1" = "green", "RW2" = "purple")) +
+  theme_minimal() +
+  labs(title = 'Mortality Ratio Estimates and Projections',
+       x = 'Year',
+       y = 'Mortality Ratio',
+       color = "Projection Type") +
+  guides(color = guide_legend(title = "Type"))
+
+```
+
+## Question 6
+
+Briefly comment on which model you think is most appropriate, or an alternative model that would be more appropriate in this context. 
+
+Based on the plot alone, if the underlying process is expected to evolve smoothly without abrupt changes, a second-order random walk might strike a good balance between adapting to new data and providing stable projections.The RW2 model adds a smoothing effect compared to RW1, as it assumes the changes in the ratio from year to year follow a random walk themselves. The RW2 model's plot line on the graph looks relatively flat, which may suggest a more stable system.
