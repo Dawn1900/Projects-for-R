@@ -1,2 +1,2 @@
-# STA2201
-My work for sta2201
+# R 
+My projects by R
